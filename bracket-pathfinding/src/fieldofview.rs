@@ -600,9 +600,36 @@ mod tests {
 
     #[test]
     fn fov_corridor() {
+        const VISUALIZE: bool = false;
+        let visualize_check = if VISUALIZE {
+            |map: &Map, center: Point, tile: Point| {
+                for y in 0..20 {
+                    for x in 0..20 {
+                        let pos = Point::new(x, y);
+                        if pos == center {
+                            print!("@")
+                        } else if pos == tile {
+                            print!("*")
+                        } else {
+                            if map.tiles[y * 20 + x] {
+                                print!("#")
+                            } else {
+                                print!(".")
+                            }
+                        }
+                    }
+                    println!()
+                }
+                println!("=======================")
+            }
+        } else {
+            |_map: &Map, _center: Point, _tile: Point| {}
+        };
+
+        // test
         let mut map = Map::new();
         let c = Point::new(10, 10);
-        let radius: i32 = 5;
+        let radius: i32 = 9;
 
         for i in 0..20 {
             let idx = 9 * 20 + i;
@@ -612,13 +639,13 @@ mod tests {
         }
 
         let visible = field_of_view(c, radius, &map);
-        for i in 1..radius * 2 - 2 {
-            let pos = Point::new(c.x - radius + i, c.y);
-            assert!(visible.contains(&pos));
-            let pos = Point::new(c.x - radius + i, c.y - 1);
-            assert!(visible.contains(&pos), format!("{:?} not in result", pos));
-            let pos = Point::new(c.x - radius + i, c.y + 1);
-            assert!(visible.contains(&pos));
+        let v_distance = radius - 1;
+        for x in (c.x - v_distance)..=(c.x + v_distance) {
+            for y in (c.y - 1)..=(c.y + 1) {
+                let pos = Point::new(x, y);
+                visualize_check(&map, c, pos);
+                assert!(visible.contains(&pos), format!("{:?} not in result", pos));
+            }
         }
     }
 }
