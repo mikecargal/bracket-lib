@@ -1,10 +1,10 @@
+use super::keycode_to_key;
 use super::{virtual_key_code_to_scan, BACKEND};
 use crate::consoles::Console;
 use crate::prelude::{
     to_char, BEvent, BTerm, GameState, SimpleConsole, SparseConsole, VirtualKeyCode,
-    BACKEND_INTERNAL
+    BACKEND_INTERNAL,
 };
-use super::keycode_to_key;
 use crate::{clear_input_state, Result};
 use bracket_color::prelude::*;
 use crossterm::event::{poll, read, Event};
@@ -24,13 +24,13 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
     let mut frames = 0;
 
     // Panic handler to reset terminal
-    std::panic::set_hook(Box::new(|_| {
+    ctrlc::set_handler(move || {
         reset_terminal();
-    }));
+    });
 
     let mut key_map: HashSet<crossterm::event::KeyCode> = HashSet::new();
     let mut keys_this_frame: HashSet<crossterm::event::KeyCode> = HashSet::new();
-    let mut output_buffer : Option<Vec<OutputBuffer>> = None;
+    let mut output_buffer: Option<Vec<OutputBuffer>> = None;
 
     crossterm::terminal::enable_raw_mode().expect("Raw mode failed");
 
@@ -61,18 +61,24 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
                     //println!("{:?}", event);
                     // Button capture goes here
                     // Mouse doesn't seem to support cursor position? That's going to cause issues.
-                    match event {
-                        crossterm::event::MouseEvent::Down(button, x, y, _modifiers) => {
+                    match event.kind {
+                        crossterm::event::MouseEventKind::Down(button) => {
                             bterm.left_click = true;
-                            bterm.mouse_pos = (x as i32 * 8, y as i32 * 8);
-                            bterm.on_mouse_position(x as f64 * 8.0, y as f64 * 8.0);
+                            bterm.mouse_pos = (event.column as i32 * 8, event.row as i32 * 8);
+                            bterm.on_mouse_position(
+                                event.column as f64 * 8.0,
+                                event.row as f64 * 8.0,
+                            );
                             bterm.on_mouse_button(button as usize, true);
                         }
-                        crossterm::event::MouseEvent::Up(button, _x, _y, _modifiers) => {
+                        crossterm::event::MouseEventKind::Up(button) => {
                             bterm.on_mouse_button(button as usize, false);
                         }
-                        crossterm::event::MouseEvent::Drag(_button, x, y, _modifiers) => {
-                            bterm.on_mouse_position(x as f64 * 8.0, y as f64 * 8.0);
+                        crossterm::event::MouseEventKind::Drag(..) => {
+                            bterm.on_mouse_position(
+                                event.column as f64 * 8.0,
+                                event.row as f64 * 8.0,
+                            );
                         }
                         _ => {
                             //eprintln!("{:?}", event);
@@ -148,13 +154,16 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
 fn reset_terminal() {
     execute!(stdout(), crossterm::style::ResetColor).expect("Command fail");
     execute!(stdout(), crossterm::cursor::Show).expect("Command fail");
+    execute!(stdout(), crossterm::terminal::LeaveAlternateScreen).expect("Command fail");
+    execute!(stdout(), crossterm::event::DisableMouseCapture).expect("Command fail");
+    crossterm::terminal::disable_raw_mode();
 }
 
 #[derive(Clone, PartialEq)]
 struct OutputBuffer {
-    glyph : char,
+    glyph: char,
     fg: RGBA,
-    bg: RGBA
+    bg: RGBA,
 }
 
 impl Default for OutputBuffer {
@@ -162,7 +171,7 @@ impl Default for OutputBuffer {
         Self {
             glyph: ' ',
             fg: RGBA::from_f32(1.0, 1.0, 1.0, 1.0),
-            bg: RGBA::from_f32(0.0, 0.0, 0.0, 0.0)
+            bg: RGBA::from_f32(0.0, 0.0, 0.0, 0.0),
         }
     }
 }
@@ -259,7 +268,8 @@ fn full_redraw() -> Result<Vec<OutputBuffer>> {
                     )
                     .expect("Command fail");
                     queue!(stdout(), Print(to_char(t.glyph as u8))).expect("Command fail");
-                    let buf_idx = (((st.height as u16 - (y as u16 + 1)) * height) + x as u16) as usize;
+                    let buf_idx =
+                        (((st.height as u16 - (y as u16 + 1)) * height) + x as u16) as usize;
                     buffer[buf_idx].glyph = to_char(t.glyph as u8);
                     buffer[buf_idx].fg = t.fg;
                     buffer[buf_idx].bg = t.bg;
@@ -274,7 +284,7 @@ fn full_redraw() -> Result<Vec<OutputBuffer>> {
     Ok(buffer)
 }
 
-fn partial_redraw(buffer : &mut Vec<OutputBuffer>) {
+fn partial_redraw(buffer: &mut Vec<OutputBuffer>) {
     let be = BACKEND.lock();
     let mut bi = BACKEND_INTERNAL.lock();
 
@@ -292,10 +302,10 @@ fn partial_redraw(buffer : &mut Vec<OutputBuffer>) {
                     let mut buf_idx = (st.height as u16 - (y as u16 + 1)) as usize * width as usize;
                     for x in 0..st.width {
                         let t = &st.tiles[idx];
-                        let new_output = OutputBuffer{
+                        let new_output = OutputBuffer {
                             glyph: to_char(t.glyph as u8),
                             fg: t.fg,
-                            bg: t.bg
+                            bg: t.bg,
                         };
                         if buffer[buf_idx] != new_output {
                             buffer[buf_idx] = new_output;
@@ -312,11 +322,12 @@ fn partial_redraw(buffer : &mut Vec<OutputBuffer>) {
                 for t in st.tiles.iter() {
                     let x = t.idx as u32 % st.width;
                     let y = t.idx as u32 / st.width;
-                    let buf_idx = (((st.height as u16 - (y as u16 + 1)) * height) + x as u16) as usize;
-                    let new_output = OutputBuffer{
+                    let buf_idx =
+                        (((st.height as u16 - (y as u16 + 1)) * height) + x as u16) as usize;
+                    let new_output = OutputBuffer {
                         glyph: to_char(t.glyph as u8),
                         fg: t.fg,
-                        bg: t.bg
+                        bg: t.bg,
                     };
                     if buffer[buf_idx] != new_output {
                         buffer[buf_idx] = new_output;
@@ -335,11 +346,7 @@ fn partial_redraw(buffer : &mut Vec<OutputBuffer>) {
         let y = idx / width as usize;
         let t = &buffer[*idx];
 
-        queue!(
-            stdout(),
-            cursor::MoveTo(x as u16, y as u16)
-        )
-        .expect("Command fail");
+        queue!(stdout(), cursor::MoveTo(x as u16, y as u16)).expect("Command fail");
 
         if t.fg != last_fg {
             queue!(

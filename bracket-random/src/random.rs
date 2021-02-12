@@ -7,7 +7,11 @@ use rand_xorshift::XorShiftRng;
 use serde_crate::{Deserialize, Serialize};
 
 #[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(crate="serde_crate"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(crate = "serde_crate")
+)]
 pub struct RandomNumberGenerator {
     rng: XorShiftRng,
 }
@@ -39,9 +43,9 @@ impl RandomNumberGenerator {
     /// So range(1,6) will give you numbers from 1 to 5.
     pub fn range<T>(&mut self, min: T, max: T) -> T
     where
-        T: rand::distributions::uniform::SampleUniform,
+        T: rand::distributions::uniform::SampleUniform + PartialOrd,
     {
-        self.rng.gen_range(min, max)
+        self.rng.gen_range(min..max)
     }
 
     /// Rolls dice, using the classic 3d6 type of format: n is the number of dice, die_type is the size of the dice.
@@ -49,18 +53,18 @@ impl RandomNumberGenerator {
         (0..n).map(|_| self.range(1, die_type + 1)).sum()
     }
 
-    // Returns the RNG's next unsigned-64 type
+    /// Returns the RNG's next unsigned-64 type
     pub fn next_u64(&mut self) -> u64 {
         self.rng.next_u64()
     }
 
-    // Rolls dice based on a DiceType struct, including application of the bonus
+    /// Rolls dice based on a DiceType struct, including application of the bonus
     #[cfg(feature = "parsing")]
     pub fn roll(&mut self, dice: DiceType) -> i32 {
         self.roll_dice(dice.n_dice, dice.die_type) + dice.bonus
     }
 
-    // Rolls dice based on passing in a string, such as roll_str("1d12")
+    /// Rolls dice based on passing in a string, such as roll_str("1d12")
     #[cfg(feature = "parsing")]
     pub fn roll_str<S: ToString>(&mut self, dice: S) -> Result<i32, DiceParseError> {
         match parse_dice_string(&dice.to_string()) {
@@ -69,7 +73,7 @@ impl RandomNumberGenerator {
         }
     }
 
-    // Returns a random index into a slice
+    /// Returns a random index into a slice
     pub fn random_slice_index<T>(&mut self, slice: &[T]) -> Option<usize> {
         if slice.is_empty() {
             None
@@ -83,7 +87,7 @@ impl RandomNumberGenerator {
         }
     }
 
-    // Returns a random entry in a slice (or none if empty)
+    /// Returns a random entry in a slice (or none if empty)
     pub fn random_slice_entry<'a, T>(&mut self, slice: &'a [T]) -> Option<&'a T> {
         if slice.is_empty() {
             None
@@ -95,6 +99,12 @@ impl RandomNumberGenerator {
                 Some(&slice[self.roll_dice(1, sz as i32) as usize - 1])
             }
         }
+    }
+
+    /// Get underlying RNG implementation for use in traits / algorithms exposed by
+    /// other crates (eg. `rand` itself)
+    pub fn get_rng(&mut self) -> &mut XorShiftRng {
+        &mut self.rng
     }
 }
 
@@ -176,7 +186,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serialize_rng() {
-        use serde_crate::{Serialize, Deserialize};
+        use serde_crate::{Deserialize, Serialize};
         let mut rng = RandomNumberGenerator::seeded(1000);
         let serialized = serde_json::to_string(&rng).unwrap();
         let n = rng.range(0, 100);

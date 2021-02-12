@@ -16,12 +16,13 @@ fn on_resize(
     dpi_scale_factor: f64,
     send_event: bool,
 ) -> Result<()> {
+    //println!("{:#?}", physical_size);
     INPUT.lock().set_scale_factor(dpi_scale_factor);
     let mut be = BACKEND.lock();
     if send_event {
         bterm.resize_pixels(
-            (physical_size.width as f64 / dpi_scale_factor) as u32,
-            (physical_size.height as f64 / dpi_scale_factor) as u32,
+            physical_size.width as u32,
+            physical_size.height as u32,
             be.resize_scaling,
         );
     }
@@ -50,8 +51,8 @@ fn on_resize(
         let num_consoles = bit.consoles.len();
         for i in 0..num_consoles {
             let font_size = bit.fonts[bit.consoles[i].font_index].tile_size;
-            let chr_w = (physical_size.width as f64 / dpi_scale_factor) as u32 / font_size.0;
-            let chr_h = (physical_size.height as f64 / dpi_scale_factor) as u32 / font_size.1;
+            let chr_w = physical_size.width as u32 / font_size.0;
+            let chr_h = physical_size.height as u32 / font_size.1;
             bit.consoles[i].console.set_char_size(chr_w, chr_h);
         }
     }
@@ -92,7 +93,7 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
         &mut bterm,
         wc.window().inner_size(),
         wc.window().scale_factor(),
-        false,
+        true,
     )?; // Additional resize to handle some X11 cases
 
     el.run(move |event, _, control_flow| {
@@ -115,16 +116,18 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
                 wc.window().request_redraw();
             }
             Event::RedrawRequested { .. } => {
-                tock(
-                    &mut bterm,
-                    wc.window().scale_factor() as f32,
-                    &mut gamestate,
-                    &mut frames,
-                    &mut prev_seconds,
-                    &mut prev_ms,
-                    &now,
-                );
-                wc.swap_buffers().unwrap();
+                if wc.window().inner_size().width > 0 {
+                    tock(
+                        &mut bterm,
+                        wc.window().scale_factor() as f32,
+                        &mut gamestate,
+                        &mut frames,
+                        &mut prev_seconds,
+                        &mut prev_ms,
+                        &now,
+                    );
+                    wc.swap_buffers().unwrap();
+                }
                 crate::hal::fps_sleep(BACKEND.lock().frame_sleep_time, &now, prev_ms);
             }
             Event::LoopDestroyed => (),
@@ -133,9 +136,18 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
                     bterm.on_event(BEvent::Moved {
                         new_position: Point::new(physical_position.x, physical_position.y),
                     });
+
+                    let scale_factor = wc.window().scale_factor();
+                    let physical_size = wc.window().inner_size();
+                    wc.resize(physical_size);
+                    on_resize(&mut bterm, physical_size, scale_factor, true)
+                        .unwrap();
                 }
-                WindowEvent::Resized(physical_size) => {
-                    on_resize(&mut bterm, *physical_size, wc.window().scale_factor(), true)
+                WindowEvent::Resized(_physical_size) => {
+                    let scale_factor = wc.window().scale_factor();
+                    let physical_size = wc.window().inner_size();
+                    wc.resize(physical_size);
+                    on_resize(&mut bterm, physical_size, scale_factor, true)
                         .unwrap();
                 }
                 WindowEvent::CloseRequested => {
@@ -153,8 +165,7 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
                     bterm.on_event(BEvent::Focused { focused: *focused });
                 }
                 WindowEvent::CursorMoved { position: pos, .. } => {
-                    let scale_factor = wc.window().scale_factor();
-                    bterm.on_mouse_position(pos.x / scale_factor, pos.y / scale_factor);
+                    bterm.on_mouse_position(pos.x, pos.y);
                 }
                 WindowEvent::CursorEntered { .. } => bterm.on_event(BEvent::CursorEntered),
                 WindowEvent::CursorLeft { .. } => bterm.on_event(BEvent::CursorLeft),
@@ -170,11 +181,13 @@ pub fn main_loop<GS: GameState>(mut bterm: BTerm, mut gamestate: GS) -> Result<(
                 }
 
                 WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    let sf = wc.window().scale_factor();
-                    on_resize(&mut bterm, **new_inner_size, sf, false).unwrap();
+                    let scale_factor = wc.window().scale_factor();
+                    let physical_size = wc.window().inner_size();
+                    wc.resize(physical_size);
+                    on_resize(&mut bterm, physical_size, scale_factor, false).unwrap();
                     bterm.on_event(BEvent::ScaleFactorChanged {
                         new_size: Point::new(new_inner_size.width, new_inner_size.height),
-                        dpi_scale_factor: sf as f32,
+                        dpi_scale_factor: scale_factor as f32,
                     })
                 }
 
@@ -286,7 +299,13 @@ fn tock<GS: GameState>(
                     0.0,
                 );
                 bi.shaders[3].setBool(be.gl.as_ref().unwrap(), "screenBurn", bterm.post_screenburn);
-                bi.shaders[3].setVec3(be.gl.as_ref().unwrap(), "screenBurnColor", bterm.screen_burn_color.r, bterm.screen_burn_color.g, bterm.screen_burn_color.b);
+                bi.shaders[3].setVec3(
+                    be.gl.as_ref().unwrap(),
+                    "screenBurnColor",
+                    bterm.screen_burn_color.r,
+                    bterm.screen_burn_color.g,
+                    bterm.screen_burn_color.b,
+                );
             } else {
                 bi.shaders[2].useProgram(be.gl.as_ref().unwrap());
             }
@@ -306,8 +325,8 @@ fn tock<GS: GameState>(
     {
         let mut be = BACKEND.lock();
         if let Some(filename) = &be.request_screenshot {
-            let w = (bterm.width_pixels as f32 * scale_factor) as u32;
-            let h = (bterm.height_pixels as f32 * scale_factor) as u32;
+            let w = (bterm.width_pixels as f32) as u32;
+            let h = (bterm.height_pixels as f32) as u32;
             let gl = be.gl.as_ref().unwrap();
 
             let mut img = image::DynamicImage::new_rgba8(w, h);
